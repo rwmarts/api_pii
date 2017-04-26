@@ -1,0 +1,5 @@
+# ignore compiled python files and any swap files 
+*.pyc
+*.sw[po]
+.#*
+
