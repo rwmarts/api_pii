@@ -1,6 +1,9 @@
 import json
 import flask
 import httplib2
+import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 from apiclient import discovery
 from oauth2client import client
 from flask_restful import Resource, Api, abort
@@ -8,29 +11,23 @@ from mysqlfnc import connect, run_query
 from collections import OrderedDict
 
 
-application = Flask(__name__)
+application = flask.Flask(__name__)
 api = Api(application)
 
 def bit_to_bool(value):
     return value > 0
 
 class PiiApi(Resource):
-    def execute_query(self, query):
-        con = connect('localhost', 3306, 'yoda', 'dagobah', 'pii_db')
-        cursor = run_query(con, query)
-        con.commit()
-        con.close()
-        return cursor
 
     def map_query(self, query, mapping, allow_empty_set=True):
         result = []
-        cursor = self.execute_query(query)
+        cursor = execute_query(query)
         rows = cursor.fetchall()
         if len(rows) == 0 and not allow_empty_set:
             abort(404, message='No resource found')
         for row in rows:
             if len(row) != len(mapping):
-                print "Field mismatch!"
+                application.logger.info("Field mismatch!")
                 exit()
             rowdict = OrderedDict()
             for index in range(len(row)):
@@ -45,12 +42,12 @@ class PiiApi(Resource):
             'errors': [],
             'payload': payload
         }
-        return jsonify(response)
+        return flask.jsonify(response)
 
 
     def id_exists(self, table, field, value):
         query = "select count(*) from {} where {} = '{}'".format(table, field, value)
-        c = self.execute_query(query)
+        c = execute_query(query)
         rows = c.fetchall()
         return len(rows) == 1
 
@@ -60,12 +57,14 @@ class PiiApi(Resource):
 
 class VariableDomainList(PiiApi):
     def get(self, active):
-        if active not in [0, 1]:
-            active = 1 # Default
-        mapping = ['value', 'label']
-        query = 'select client_domains_id, client_domain from client_domains where active = {}'.format(active)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            if active not in [0, 1]:
+                active = 1 # Default
+            mapping = ['value', 'label']
+            query = 'select client_domains_id, client_domain from client_domains where active = {}'.format(active)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 class DomainList(VariableDomainList):
     def get(self):
@@ -73,40 +72,48 @@ class DomainList(VariableDomainList):
 
 class Domain(PiiApi):
     def get(self, domain_id):
-        mapping = ['value', 'label', 'selected']
-        query = 'select client_domains_id, client_domain, active from client_domains where client_domains_id = {}'.format(domain_id)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            mapping = ['value', 'label', 'selected']
+            query = 'select client_domains_id, client_domain, active from client_domains where client_domains_id = {}'.format(domain_id)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 class VariableProviderList(PiiApi):
     def get(self, active):
-        if active not in [0, 1]:
-            active = 1 # Default
-        mapping = ['value', 'label']
-        query = 'select providers_id, provider from providers where active = {}'.format(active)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            if active not in [0, 1]:
+                active = 1 # Default
+            mapping = ['value', 'label']
+            query = 'select providers_id, provider from providers where active = {}'.format(active)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 class ProviderList(VariableProviderList):
     def get(self):
-        return super(ProviderList, self).get(1)
+            return super(ProviderList, self).get(1)
 
 class Provider(PiiApi):
     def get(self, provider_id):
-        mapping = ['value', 'label', 'selected']
-        query = 'select providers_id, provider, active from providers where providers_id = {}'.format(provider_id)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            mapping = ['value', 'label', 'selected']
+            query = 'select providers_id, provider, active from providers where providers_id = {}'.format(provider_id)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 
 class VariableFrequencyList(PiiApi):
     def get(self, active):
-        if active not in [0, 1]:
-            active = 1 # Default
-        mapping = ['value', 'label']
-        query = 'select frequencies_id, frequency from frequencies where active ={}'.format(active)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            if active not in [0, 1]:
+                active = 1 # Default
+            mapping = ['value', 'label']
+            query = 'select frequencies_id, frequency from frequencies where active ={}'.format(active)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 
 class FrequencyList(VariableFrequencyList):
@@ -116,34 +123,42 @@ class FrequencyList(VariableFrequencyList):
 
 class Frequency(PiiApi):
     def get(self, frequency_id):
-        mapping = ['value', 'label', 'selected']
-        query = 'select frequencies_id, frequency, active from frequencies where frequencies_id = {}'.format(frequency_id)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            mapping = ['value', 'label', 'selected']
+            query = 'select frequencies_id, frequency, active from frequencies where frequencies_id = {}'.format(frequency_id)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 
 class DomainMailList(PiiApi):
     def get(self, domain_id):
-        mapping = ['value', 'label', 'selected']
-        query = 'select user_id, email, active from users where user_id in (select user_id from users_client_domains where client_domains_id = {})'.format(domain_id)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            mapping = ['value', 'label', 'selected']
+            query = 'select user_id, email, active from users where user_id in (select user_id from users_client_domains where client_domains_id = {})'.format(domain_id)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 
 class ProviderClientList(PiiApi):
     def get(self, provider_id):
-        mapping = ['value', 'label', 'selected']
-        query = 'select client_domains_id, client_domain, active from client_domains where user_id in (select client_domains_id from provider_clients where provider_id = {})'.format(provider_id)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            mapping = ['value', 'label', 'selected']
+            query = 'select client_domains_id, client_domain, active from client_domains where user_id in (select client_domains_id from provider_clients where provider_id = {})'.format(provider_id)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 
 class ProviderMetricsList(PiiApi):
     def get(self, provider_id):
-        mapping = ['value', 'label']
-        query = 'select metrics_id, metric from metrics where metric_id in (select metric_id from provider_metrics where provider_id = {})'.format(provider_id)
-        result = self.map_query(query, mapping)
-        return self.send_response(result)
+        if is_employee():
+            mapping = ['value', 'label']
+            query = 'select metrics_id, metric from metrics where metric_id in (select metric_id from provider_metrics where provider_id = {})'.format(provider_id)
+            result = self.map_query(query, mapping)
+            return self.send_response(result)
+        return "You are not authorized"
 
 
 class Schedules(PiiApi):
@@ -156,40 +171,45 @@ class Schedules(PiiApi):
         Buildup should be like:
         get all schedules(id, providerid, frequencyid)
         """
-        mapping = ['scheduleId', 'domainId', 'providerId', 'frequencyId']
-        sched_query = 'select schedules_id, client_domain_id, providers_id, frequencies_id from schedules'
-        schedules = self.map_query(sched_query, mapping)
-        # Now add associated emails
-        mail_mapping = ['value', 'label', 'selected']
-        for schedule in schedules:
-            user_query = 'select users_id, email, active from users where user_types_id = 2 and users_id in (select users_id from users_schedules where schedules_id = {})'.format(schedule['scheduleId'])
-            users = self.map_query(user_query, mail_mapping)
-            for user in users:
-                user['selected'] = bit_to_bool(user['selected'])
-            schedule['emails'] = users
-        return self.send_response(schedules)
+        if is_employee():
+            mapping = ['scheduleId', 'domainId', 'providerId', 'frequencyId']
+            sched_query = 'select schedules_id, client_domain_id, providers_id, frequencies_id from schedules'
+            schedules = self.map_query(sched_query, mapping)
+            # Now add associated emails
+            mail_mapping = ['value', 'label', 'selected']
+            for schedule in schedules:
+                user_query = 'select users_id, email, active from users where user_types_id = 2 and users_id in (select users_id from users_schedules where schedules_id = {})'.format(schedule['scheduleId'])
+                users = self.map_query(user_query, mail_mapping)
+                for user in users:
+                    user['selected'] = bit_to_bool(user['selected'])
+                    schedule['emails'] = users
+            return self.send_response(schedules)
+        return "You are not authorized"
 
 class ScheduleEdit(PiiApi):
     def get(self):
         return "Error: Incorrect use"
 
     def post(self):
-        data = request.get_json(force=True)
-        if self.validate_fields(data):
-            if 'scheduleId' in data:
-                response = self.update_schedule(data)
+        if is_employee():
+            data = request.get_json(force=True)
+            if self.validate_fields(data):
+                if 'scheduleId' in data:
+                    response = self.update_schedule(data)
+                else:
+                    response = self.create_schedule(data)
             else:
-                response = self.create_schedule(data)
-        else:
-            response = {"success": False}
-        return self.send_response(response)
+                response = {"success": False}
+            return self.send_response(response)
+        return "You are not authorized"
 
     def create_schedule(self, fields):
         query = "insert into schedules(providers_id, frequencies_id, client_domain_id, expires, hash, active) values ({}, {}, {}, now(), '', 1)".format(fields['providerId'], fields['frequencyId'], fields['domainId'])
-        c = self.execute_query(query)
+        c = execute_query(query)
         self.add_emails(c.lastrowid, fields['emailIds'])
         response = {"success": True}
         return response
+        return "You are not authorized"
 
     def update_schedule(self, fields):
         query = "update schedules set providers_id = {}, frequencies_id = {}, client_domain_id ={} where schedules_id = []".format(fields['providerId'], fields['frequencyId'], fields['domainId'], fields['scheduleId'])
@@ -239,13 +259,13 @@ class ScheduleEdit(PiiApi):
         for email in emails:
             query = "insert into user_schedules(schedules_id, users_id) values ({}, {})".format(
                 scheduleId, email)
-            self.execute_query(query)
+            execute_query(query)
 
 
 
     def remove_emails(self, scheduleId):
         query = "delete from user_schedules where schedules_id = {}".format(scheduleId)
-        self.execute_query(query)
+        execute_query(query)
 
 
 class ScheduleDelete(PiiApi):
@@ -253,10 +273,12 @@ class ScheduleDelete(PiiApi):
     def get(self, scheduleId):
         # Start off naive
         # TODO: scrub associative tables
-        query = "delete from schedules where schedules_id = {}".format(scheduleId)
-        self.execute_query(query)
-        response = {"success": True}
-        return response
+        if is_employee():
+            query = "delete from schedules where schedules_id = {}".format(scheduleId)
+            execute_query(query)
+            response = {"success": True}
+            return response
+        return "You are not authorized"
 
 
 api.add_resource(PiiApi, '/api')
@@ -278,18 +300,24 @@ api.add_resource(ScheduleDelete, '/schedule/delete/<int:schedule_id>')
 # Get a starting point for our tests
 # Flask routes
 
+NMPI_USER = 1
+CLIENT = 2
+
 def authorize(user):
+    application.logger.info("Enter authorize")
     authenticated = False
     emails = user['emails']
     for email in emails:
-        sql = 'select users_id, user_types_id from users where email = "{}"'
+        sql = "select users_id, user_types_id from users where email = '{}'".format(email['value'])
+        application.logger.info("Sql used: {}".format(sql))
         c = execute_query(sql)
         rows = c.fetchall()
         if len(rows) == 1:
             row = rows[0]
             flask.session['userid'] = row[0]
             flask.session['usertype'] = row[1]
-            flask.session['email'] = email
+            flask.session['displayname'] = user['displayName']
+            flask.session['email'] = email['value']
             authenticated = True
             break;
     if not authenticated:
@@ -298,52 +326,74 @@ def authorize(user):
 
 
 
-def execute_query(self, query):
+def execute_query(query):
     con = connect('localhost', 3306, 'yoda', 'dagobah', 'pii_db')
     cursor = run_query(con, query)
     con.commit()
     con.close()
     return cursor
 
+def is_employee():
+    return flask.session.get('usertype', -1) == NMPI_USER
+
+
+def is_client():
+    return flask.session.get('usertype', -1) == CLIENT
+
 
 @application.route('/login')
 def login():
-  if 'credentials' not in flask.session:
-    return flask.redirect(flask.url_for('oauth2callback'))
-  credentials = client.OAuth2Credentials.from_json(flask.session['credentials'])
-  if credentials.access_token_expired:
-    return flask.redirect(flask.url_for('oauth2callback'))
-  else:
-    http_auth = credentials.authorize(httplib2.Http())
-    plus = discovery.build('plus', 'v1', http_auth)
-    people = plus.people()
-    me = people.get(userId='me').execute()
-    authenticated = authorize(me)
-    if authenticated:
-        return flask.redirect(flask.url_for('index'))
-    return flask.redirect(flask.url_for('forbidden'))
-
+    application.logger.info("Enter login")
+    if 'credentials' not in flask.session:
+        return flask.redirect(flask.url_for('oauth2callback'))
+    credentials = client.OAuth2Credentials.from_json(flask.session['credentials'])
+    if credentials.access_token_expired:
+        return flask.redirect(flask.url_for('oauth2callback'))
+    else:
+        http_auth = credentials.authorize(httplib2.Http())
+        plus = discovery.build('plus', 'v1', http_auth)
+        people = plus.people()
+        me = people.get(userId='me').execute()
+        application.logger.info("User:")
+        application.logger.info(me)
+        authenticated = authorize(me)
+        if authenticated:
+            return "Successfully logged in"
+            #return flask.redirect(flask.url_for('index'))
+        return "No way, Jose"
+        #return flask.redirect(flask.url_for('forbidden'))
 
 @application.route('/oauth2callback')
 def oauth2callback():
-  flow = client.flow_from_clientsecrets(
-      'client_secrets.json',
-      scope='https://www.googleapis.com/auth/plus.me',
-      redirect_uri=flask.url_for('oauth2callback', _external=True),
-      )
-  if 'code' not in flask.request.args:
-    auth_uri = flow.step1_get_authorize_url()
-    return flask.redirect(auth_uri)
-  else:
-    auth_code = flask.request.args.get('code')
-    credentials = flow.step2_exchange(auth_code)
-    flask.session['credentials'] = credentials.to_json()
-    return flask.redirect(flask.url_for('index'))
+    flow = client.flow_from_clientsecrets(
+        'client_secrets.json',
+        scope='https://www.googleapis.com/auth/userinfo.email',
+        redirect_uri=flask.url_for('oauth2callback', _external=True),
+    )
+    if 'code' not in flask.request.args:
+        auth_uri = flow.step1_get_authorize_url()
+        return flask.redirect(auth_uri)
+    else:
+        auth_code = flask.request.args.get('code')
+        credentials = flow.step2_exchange(auth_code)
+        flask.session['credentials'] = credentials.to_json()
+        return flask.redirect(flask.url_for('login'))
 
 @application.route("/tests")
 def testpage():
     return render_template('page.html')
 
+@application.route('/index')
+def index():
+    return "Successfully logged in"
+
+@application.route('/forbidden')
+def forbidden():
+    return "Forbidden!"
 
 if __name__ == '__main__':
+    handler = RotatingFileHandler('foo.log', maxBytes=10000, backupCount=1)
+    handler.setLevel(logging.INFO)
+    application.logger.addHandler(handler)
+    application.secret_key = str(uuid.uuid4())
     application.run(debug=True)
